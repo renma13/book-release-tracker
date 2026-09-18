@@ -100,8 +100,12 @@
         Get a short email the moment you open the app on a day a book is released.
         This uses <a href="https://www.emailjs.com/" target="_blank" rel="noopener">EmailJS</a>,
         a free service that sends email straight from your browser — no server needed.
-        Create a free account, add an email service and a template with a <code>{{message}}</code> variable,
-        then paste your keys below.
+        Create a free account and an email service, then build a template using
+        any of these variables: <code>{{message}}</code> (a ready-made summary —
+        handles multiple same-day releases too), <code>{{book_title}}</code>,
+        <code>{{book_author}}</code>, and <code>{{book_count}}</code>. For example,
+        put <code>📚 {{book_title}} is out today!</code> in the subject line.
+        Paste your keys below once the template's set up.
       </p>
       <label for="notify-email">Notify this email address</label>
       <input type="email" id="notify-email" placeholder="you@example.com" />

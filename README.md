@@ -38,8 +38,15 @@ upcoming book release dates on a calendar — no manual re-importing needed.
 ### 3. Set up email notifications (optional)
 1. Create a free account at [emailjs.com](https://www.emailjs.com/).
 2. Add an **Email Service** (e.g. connect your Gmail).
-3. Create an **Email Template** with a `{{message}}` variable in the body, and
-   `{{to_email}}` as the recipient field.
+3. Create an **Email Template** using `{{to_email}}` as the recipient field, and
+   any of these variables in the subject/body:
+   - `{{message}}` — a ready-made summary (handles multiple same-day releases too)
+   - `{{book_title}}` — the released book's title
+   - `{{book_author}}` — its author
+   - `{{book_count}}` — how many books released today
+
+   For example, a subject line of `📚 {{book_title}} is out today!` with
+   `{{message}}` in the body works well.
 4. From the EmailJS dashboard, grab your **Public Key**, **Service ID**, and
    **Template ID**.
 

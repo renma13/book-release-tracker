@@ -126,7 +126,12 @@ document.getElementById("save-settings").addEventListener("click", () => {
 
 document.getElementById("send-test-email").addEventListener("click", async () => {
   try {
-    await sendEmail("Shelf Watch test: if you're reading this, notifications are working.");
+    await sendEmail({
+      message: "Shelf Watch test: if you're reading this, notifications are working.",
+      book_title: "Example Book Title",
+      book_author: "Example Author",
+      book_count: 1,
+    });
     alert("Test email sent — check your inbox.");
   } catch (err) {
     alert("Couldn't send test email: " + err.message);
@@ -139,7 +144,11 @@ function initEmailJs() {
   }
 }
 
-async function sendEmail(message) {
+// `params` becomes the template variables available in EmailJS: at minimum
+// {{message}}, plus (when known) {{book_title}}, {{book_author}}, and
+// {{book_count}} — use these in your template's subject or body, e.g.
+// "📚 {{book_title}} is out today!" instead of just {{message}}.
+async function sendEmail(params) {
   const s = state.settings;
   if (!s.emailjsPublicKey || !s.emailjsServiceId || !s.emailjsTemplateId) {
     throw new Error("EmailJS is not fully configured in Settings.");
@@ -149,7 +158,7 @@ async function sendEmail(message) {
   }
   return emailjs.send(s.emailjsServiceId, s.emailjsTemplateId, {
     to_email: s.notifyEmail,
-    message,
+    ...params,
   });
 }
 
@@ -383,7 +392,15 @@ function checkAndNotifyTodayReleases() {
     ? `"${releasingToday[0].title}" by ${releasingToday[0].author} is out today!`
     : `Out today:\n` + releasingToday.map((b) => `- "${b.title}" by ${b.author}`).join("\n");
 
-  sendEmail(message)
+  // book_title/book_author cover the common case (one release); for multiple
+  // releases in one day they hold just the first, so templates that want all
+  // of them should use {{message}}, which lists every title.
+  sendEmail({
+    message,
+    book_title: releasingToday[0].title,
+    book_author: releasingToday[0].author,
+    book_count: releasingToday.length,
+  })
     .then(() => {
       releasingToday.forEach((b) => notified.add(b.id));
       saveNotifiedIds(notified);

@@ -239,18 +239,21 @@ function parseGoodreadsRss(xmlText) {
   const items = [...doc.querySelectorAll("item")];
   return items.map((item) => {
     const get = (tag) => item.querySelector(tag)?.textContent?.trim() || "";
-    const bookId = get("book_id") || get("guid") || get("link");
+    const bookId = get("book_id");
     const isbn = get("isbn") || get("isbn13");
     const author = get("author_name");
     const title = get("title");
     const cover = get("book_large_image_url") || get("book_medium_image_url") || get("book_image_url");
+    // The feed's own <link> points to the user's private review page (requires
+    // login). The public book page is reconstructed from book_id instead.
+    const link = bookId ? `https://www.goodreads.com/book/show/${bookId}` : get("link");
     return {
-      id: bookId || title + "|" + author,
+      id: bookId || get("guid") || title + "|" + author,
       title,
       author,
       isbn,
       cover,
-      link: get("link"),
+      link,
     };
   });
 }
@@ -285,16 +288,18 @@ async function lookupReleaseDate(book) {
     }
 
     if (book.title) {
-      const byTitle = await hardcoverQuery(token, `
-        query LookupByTitle($title: String!, $author: String!) {
-          books(
-            where: {title: {_ilike: $title}, contributions: {author: {name: {_ilike: $author}}}}
-            order_by: {users_count: desc}
-            limit: 1
-          ) { release_date }
+      // Hardcover disallows filtering books/editions with _ilike, so title/author
+      // matching goes through its dedicated search endpoint instead, which returns
+      // release_date directly on each hit's document.
+      const q = [book.title, book.author].filter(Boolean).join(" ");
+      const searchResult = await hardcoverQuery(token, `
+        query Search($q: String!) {
+          search(query: $q, query_type: "books", per_page: 1, page: 1) {
+            results
+          }
         }
-      `, { title: `%${book.title}%`, author: `%${book.author || ""}%` });
-      const date = byTitle?.books?.[0]?.release_date;
+      `, { q });
+      const date = searchResult?.search?.results?.hits?.[0]?.document?.release_date;
       if (date) return date;
     }
 
@@ -405,8 +410,8 @@ function renderCalendar() {
           img.src = b.cover;
           img.alt = b.title;
           img.title = `${b.title} — ${b.author}`;
-          img.className = "mini-cover";
-          row.appendChild(img);
+          img.className = "mini-cover" + (dateKey < todayKey ? " released" : "");
+          row.appendChild(linkWrap(img, b.link));
         }
       });
       cell.appendChild(row);
@@ -458,11 +463,22 @@ function renderList() {
       ? "Out today"
       : new Date(book.releaseDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 
-    row.appendChild(img);
+    row.appendChild(linkWrap(img, book.link));
     row.appendChild(info);
     row.appendChild(date);
     upcomingList.appendChild(row);
   }
+}
+
+// Wraps a cover <img> in a link to its Goodreads page, when we have one.
+function linkWrap(img, link) {
+  if (!link) return img;
+  const a = document.createElement("a");
+  a.href = link;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.appendChild(img);
+  return a;
 }
 
 function escapeHtml(str) {

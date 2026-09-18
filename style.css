@@ -162,6 +162,10 @@ main {
   gap: 3px;
   overflow: hidden;
 }
+.day-books a, .book-row a {
+  display: block;
+  line-height: 0;
+}
 
 .mini-cover {
   width: 26px;
@@ -169,7 +173,15 @@ main {
   object-fit: cover;
   border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-  cursor: default;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.mini-cover:hover {
+  transform: scale(1.08);
+}
+.mini-cover.released {
+  filter: grayscale(1);
+  opacity: 0.75;
 }
 
 .list-section {
@@ -205,6 +217,11 @@ main {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
   flex-shrink: 0;
   background: var(--border);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.book-row img:hover {
+  transform: scale(1.04);
 }
 
 .book-info { flex: 1; min-width: 0; }

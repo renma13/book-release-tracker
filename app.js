@@ -1,0 +1,496 @@
+// Shelf Watch — tracks upcoming release dates for books on a Goodreads "To-Read" shelf.
+//
+// How syncing works:
+// Goodreads has no public API anymore. Every shelf (including private ones) has an
+// RSS feed URL containing a secret token, found at the bottom of the shelf page on
+// goodreads.com behind the small "RSS" link. That URL acts like a saved credential —
+// paste it once in Settings and this app can keep re-fetching it through a CORS proxy
+// (plain browser JS can't call goodreads.com directly due to CORS).
+//
+// Release dates: Goodreads RSS often only has the original publish year, not a
+// future edition's release date, so each book is looked up via the Hardcover API
+// by ISBN (falling back to title/author) using your own free Hardcover API key.
+
+const STORAGE_KEYS = {
+  settings: "shelfwatch_settings",
+  books: "shelfwatch_books",
+  lastSync: "shelfwatch_last_sync",
+  notified: "shelfwatch_notified_ids",
+};
+
+const DEFAULT_PROXY = "https://proxy.corsfix.com/?";
+const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const LOOKUP_BATCH_LIMIT = 30; // cap release-date lookups per sync so large shelves don't stall or hit API rate limits
+const MAX_CONSECUTIVE_LOOKUP_FAILURES = 5; // stop this batch early if the lookup API is rate-limiting us
+
+let state = {
+  settings: loadSettings(),
+  books: loadBooks(),
+  viewDate: new Date(),
+};
+
+// ---------- Persistence ----------
+
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.settings)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(settings) {
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+}
+
+function loadBooks() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.books)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBooks(books) {
+  localStorage.setItem(STORAGE_KEYS.books, JSON.stringify(books));
+}
+
+function loadNotifiedIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(STORAGE_KEYS.notified)) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveNotifiedIds(set) {
+  localStorage.setItem(STORAGE_KEYS.notified, JSON.stringify([...set]));
+}
+
+// ---------- Settings panel ----------
+
+const settingsPanel = document.getElementById("settings-panel");
+const settingsOverlay = document.getElementById("settings-overlay");
+
+function openSettings() {
+  const s = state.settings;
+  document.getElementById("rss-url").value = s.rssUrl || "";
+  document.getElementById("proxy-url").value = s.proxyUrl || DEFAULT_PROXY;
+  document.getElementById("hardcover-token").value = s.hardcoverToken || "";
+  document.getElementById("notify-email").value = s.notifyEmail || "";
+  document.getElementById("emailjs-public-key").value = s.emailjsPublicKey || "";
+  document.getElementById("emailjs-service-id").value = s.emailjsServiceId || "";
+  document.getElementById("emailjs-template-id").value = s.emailjsTemplateId || "";
+  document.getElementById("notify-enabled").checked = !!s.notifyEnabled;
+  settingsPanel.classList.remove("hidden");
+  settingsOverlay.classList.remove("hidden");
+}
+
+function closeSettings() {
+  settingsPanel.classList.add("hidden");
+  settingsOverlay.classList.add("hidden");
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettings);
+document.getElementById("close-settings").addEventListener("click", closeSettings);
+settingsOverlay.addEventListener("click", closeSettings);
+
+document.getElementById("save-settings").addEventListener("click", () => {
+  const settings = {
+    rssUrl: document.getElementById("rss-url").value.trim(),
+    proxyUrl: document.getElementById("proxy-url").value.trim() || DEFAULT_PROXY,
+    hardcoverToken: document.getElementById("hardcover-token").value.trim(),
+    notifyEmail: document.getElementById("notify-email").value.trim(),
+    emailjsPublicKey: document.getElementById("emailjs-public-key").value.trim(),
+    emailjsServiceId: document.getElementById("emailjs-service-id").value.trim(),
+    emailjsTemplateId: document.getElementById("emailjs-template-id").value.trim(),
+    notifyEnabled: document.getElementById("notify-enabled").checked,
+  };
+  state.settings = settings;
+  saveSettings(settings);
+  initEmailJs();
+
+  const confirm = document.getElementById("save-confirm");
+  confirm.classList.remove("hidden");
+  setTimeout(() => confirm.classList.add("hidden"), 2000);
+});
+
+document.getElementById("send-test-email").addEventListener("click", async () => {
+  try {
+    await sendEmail("Shelf Watch test: if you're reading this, notifications are working.");
+    alert("Test email sent — check your inbox.");
+  } catch (err) {
+    alert("Couldn't send test email: " + err.message);
+  }
+});
+
+function initEmailJs() {
+  if (window.emailjs && state.settings.emailjsPublicKey) {
+    emailjs.init({ publicKey: state.settings.emailjsPublicKey });
+  }
+}
+
+async function sendEmail(message) {
+  const s = state.settings;
+  if (!s.emailjsPublicKey || !s.emailjsServiceId || !s.emailjsTemplateId) {
+    throw new Error("EmailJS is not fully configured in Settings.");
+  }
+  if (!s.notifyEmail) {
+    throw new Error("No recipient email set in Settings.");
+  }
+  return emailjs.send(s.emailjsServiceId, s.emailjsTemplateId, {
+    to_email: s.notifyEmail,
+    message,
+  });
+}
+
+// ---------- Syncing from Goodreads RSS ----------
+
+const syncBtn = document.getElementById("sync-btn");
+const syncStatus = document.getElementById("sync-status");
+
+syncBtn.addEventListener("click", () => sync(true));
+
+async function sync(manual) {
+  const s = state.settings;
+  if (!s.rssUrl) {
+    if (manual) openSettings();
+    syncStatus.textContent = "Add your shelf RSS URL in Settings";
+    return;
+  }
+
+  syncStatus.textContent = "Syncing…";
+  syncBtn.disabled = true;
+
+  try {
+    const proxy = s.proxyUrl || DEFAULT_PROXY;
+    const res = await fetch(proxy + s.rssUrl);
+    if (!res.ok) throw new Error("Proxy/feed request failed (" + res.status + ")");
+    const text = await res.text();
+    const items = parseGoodreadsRss(text);
+
+    if (items.length === 0) {
+      throw new Error("No books found — check the RSS URL is your To-Read shelf.");
+    }
+
+    const existing = new Map(state.books.map((b) => [b.id, b]));
+    const merged = [];
+    for (const item of items) {
+      const prior = existing.get(item.id);
+      merged.push({
+        ...item,
+        releaseDate: prior?.releaseDate !== undefined ? prior.releaseDate : undefined,
+      });
+    }
+
+    // Look up release dates only for books we haven't resolved yet, capped per
+    // sync so a large shelf doesn't stall the UI or get rate-limited into oblivion.
+    const unresolved = merged.filter((b) => b.releaseDate === undefined);
+    const batch = state.settings.hardcoverToken ? unresolved.slice(0, LOOKUP_BATCH_LIMIT) : [];
+    let consecutiveFailures = 0;
+    let backoffMs = 1000;
+
+    for (let i = 0; i < batch.length; i++) {
+      const book = batch[i];
+      syncStatus.textContent = `Looking up release dates… ${i + 1}/${batch.length}`;
+      let result = await lookupReleaseDate(book);
+
+      // Back off and retry a couple of times on rate limiting before giving up on this book.
+      let retries = 0;
+      while (result === undefined && retries < 2) {
+        await sleep(backoffMs);
+        backoffMs = Math.min(backoffMs * 2, 8000);
+        result = await lookupReleaseDate(book);
+        retries++;
+      }
+
+      if (result === undefined) {
+        consecutiveFailures++;
+      } else {
+        consecutiveFailures = 0;
+        backoffMs = 1000;
+        book.releaseDate = result;
+      }
+      if (consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) break;
+      await sleep(300); // be polite to the Hardcover API's rate limit
+    }
+
+    state.books = merged;
+    saveBooks(merged);
+    localStorage.setItem(STORAGE_KEYS.lastSync, Date.now().toString());
+
+    render();
+    checkAndNotifyTodayReleases();
+    const remaining = merged.filter((b) => b.releaseDate === undefined).length;
+    const syncedNote = !state.settings.hardcoverToken
+      ? " (add a Hardcover API key in Settings to fetch release dates)"
+      : remaining ? ` (${remaining} more to look up next sync)` : "";
+    syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + syncedNote;
+  } catch (err) {
+    console.error(err);
+    syncStatus.textContent = "Sync failed: " + err.message;
+  } finally {
+    syncBtn.disabled = false;
+  }
+}
+
+function parseGoodreadsRss(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  const items = [...doc.querySelectorAll("item")];
+  return items.map((item) => {
+    const get = (tag) => item.querySelector(tag)?.textContent?.trim() || "";
+    const bookId = get("book_id") || get("guid") || get("link");
+    const isbn = get("isbn") || get("isbn13");
+    const author = get("author_name");
+    const title = get("title");
+    const cover = get("book_large_image_url") || get("book_medium_image_url") || get("book_image_url");
+    return {
+      id: bookId || title + "|" + author,
+      title,
+      author,
+      isbn,
+      cover,
+      link: get("link"),
+    };
+  });
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ---------- Release date lookup (Hardcover) ----------
+
+const HARDCOVER_ENDPOINT = "https://api.hardcover.app/v1/graphql";
+
+// Returns a date string if found, null if genuinely not found (safe to cache),
+// or undefined if the lookup failed/was rate-limited (should be retried later).
+async function lookupReleaseDate(book) {
+  const token = state.settings.hardcoverToken;
+  if (!token) return undefined;
+
+  try {
+    if (book.isbn) {
+      const byIsbn = await hardcoverQuery(token, `
+        query LookupByIsbn($isbn: String!) {
+          editions(where: {_or: [{isbn_13: {_eq: $isbn}}, {isbn_10: {_eq: $isbn}}]}, limit: 1) {
+            release_date
+            book { release_date }
+          }
+        }
+      `, { isbn: book.isbn });
+      const edition = byIsbn?.editions?.[0];
+      const date = edition?.release_date || edition?.book?.release_date;
+      if (date) return date;
+    }
+
+    if (book.title) {
+      const byTitle = await hardcoverQuery(token, `
+        query LookupByTitle($title: String!, $author: String!) {
+          books(
+            where: {title: {_ilike: $title}, contributions: {author: {name: {_ilike: $author}}}}
+            order_by: {users_count: desc}
+            limit: 1
+          ) { release_date }
+        }
+      `, { title: `%${book.title}%`, author: `%${book.author || ""}%` });
+      const date = byTitle?.books?.[0]?.release_date;
+      if (date) return date;
+    }
+
+    return null; // queried successfully, genuinely no release date on record
+  } catch {
+    return undefined;
+  }
+}
+
+async function hardcoverQuery(token, query, variables) {
+  const auth = token.trim().startsWith("Bearer ") ? token.trim() : `Bearer ${token.trim()}`;
+  const res = await fetch(HARDCOVER_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: auth },
+    body: JSON.stringify({ query, variables }),
+  });
+  // Any non-OK response (bad/expired token, rate limit, server error) should be
+  // retried later, not cached as "no release date found" — only a successful
+  // query with no matching rows means that.
+  if (!res.ok) throw new Error("Hardcover API request failed (" + res.status + ")");
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message || "Hardcover API error");
+  return json.data;
+}
+
+// ---------- Email notification on release day ----------
+
+function checkAndNotifyTodayReleases() {
+  if (!state.settings.notifyEnabled) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const notified = loadNotifiedIds();
+  const releasingToday = state.books.filter((b) => b.releaseDate === today && !notified.has(b.id));
+
+  if (releasingToday.length === 0) return;
+
+  const message = releasingToday.length === 1
+    ? `"${releasingToday[0].title}" by ${releasingToday[0].author} is out today!`
+    : `Out today:\n` + releasingToday.map((b) => `- "${b.title}" by ${b.author}`).join("\n");
+
+  sendEmail(message)
+    .then(() => {
+      releasingToday.forEach((b) => notified.add(b.id));
+      saveNotifiedIds(notified);
+    })
+    .catch((err) => console.warn("Release notification email failed:", err.message));
+}
+
+// ---------- Calendar rendering ----------
+
+const monthLabel = document.getElementById("month-label");
+const calendarDays = document.getElementById("calendar-days");
+const upcomingList = document.getElementById("upcoming-list");
+
+document.getElementById("prev-month").addEventListener("click", () => {
+  state.viewDate.setMonth(state.viewDate.getMonth() - 1);
+  renderCalendar();
+});
+document.getElementById("next-month").addEventListener("click", () => {
+  state.viewDate.setMonth(state.viewDate.getMonth() + 1);
+  renderCalendar();
+});
+document.getElementById("today-btn").addEventListener("click", () => {
+  state.viewDate = new Date();
+  renderCalendar();
+});
+
+function render() {
+  renderCalendar();
+  renderList();
+}
+
+function renderCalendar() {
+  const year = state.viewDate.getFullYear();
+  const month = state.viewDate.getMonth();
+  monthLabel.textContent = state.viewDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  const booksByDate = groupBooksByDate();
+  const firstDay = new Date(year, month, 1);
+  const startOffset = firstDay.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayKey = new Date().toISOString().slice(0, 10);
+
+  calendarDays.innerHTML = "";
+
+  for (let i = 0; i < startOffset; i++) {
+    const empty = document.createElement("div");
+    empty.className = "day-cell empty";
+    calendarDays.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const cell = document.createElement("div");
+    cell.className = "day-cell" + (dateKey === todayKey ? " today" : "");
+
+    const num = document.createElement("div");
+    num.className = "day-number";
+    num.textContent = day;
+    cell.appendChild(num);
+
+    const booksToday = booksByDate.get(dateKey) || [];
+    if (booksToday.length) {
+      const row = document.createElement("div");
+      row.className = "day-books";
+      booksToday.forEach((b) => {
+        if (b.cover) {
+          const img = document.createElement("img");
+          img.src = b.cover;
+          img.alt = b.title;
+          img.title = `${b.title} — ${b.author}`;
+          img.className = "mini-cover";
+          row.appendChild(img);
+        }
+      });
+      cell.appendChild(row);
+    }
+
+    calendarDays.appendChild(cell);
+  }
+}
+
+function groupBooksByDate() {
+  const map = new Map();
+  for (const book of state.books) {
+    if (!book.releaseDate) continue;
+    if (!map.has(book.releaseDate)) map.set(book.releaseDate, []);
+    map.get(book.releaseDate).push(book);
+  }
+  return map;
+}
+
+function renderList() {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const upcoming = state.books
+    .filter((b) => b.releaseDate && b.releaseDate >= todayKey)
+    .sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+
+  if (upcoming.length === 0) {
+    upcomingList.innerHTML = state.books.length
+      ? '<p class="empty-state">No upcoming release dates found yet.</p>'
+      : '<p class="empty-state">No data yet. Open Settings to connect your Goodreads To-Read shelf.</p>';
+    return;
+  }
+
+  upcomingList.innerHTML = "";
+  for (const book of upcoming) {
+    const row = document.createElement("div");
+    row.className = "book-row";
+
+    const img = document.createElement("img");
+    img.src = book.cover || "";
+    img.alt = book.title;
+
+    const info = document.createElement("div");
+    info.className = "book-info";
+    info.innerHTML = `<div class="book-title">${escapeHtml(book.title)}</div><div class="book-author">${escapeHtml(book.author)}</div>`;
+
+    const date = document.createElement("div");
+    date.className = "book-date" + (book.releaseDate === todayKey ? " today" : "");
+    date.textContent = book.releaseDate === todayKey
+      ? "Out today"
+      : new Date(book.releaseDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+    row.appendChild(img);
+    row.appendChild(info);
+    row.appendChild(date);
+    upcomingList.appendChild(row);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str || "";
+  return div.innerHTML;
+}
+
+// ---------- Init ----------
+
+function init() {
+  initEmailJs();
+  render();
+
+  const lastSync = Number(localStorage.getItem(STORAGE_KEYS.lastSync) || 0);
+  const dueForAutoSync = Date.now() - lastSync > SYNC_INTERVAL_MS;
+
+  if (state.books.length) {
+    checkAndNotifyTodayReleases();
+  }
+
+  if (state.settings.rssUrl && dueForAutoSync) {
+    sync(false);
+  } else if (!state.settings.rssUrl) {
+    syncStatus.textContent = "Add your shelf RSS URL in Settings";
+  } else {
+    syncStatus.textContent = lastSync ? "Synced " + new Date(lastSync).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Not synced yet";
+  }
+}
+
+init();

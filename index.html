@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shelf Watch — Upcoming Releases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">📚</span>
+    <h1>Shelf Watch</h1>
+  </div>
+  <div class="topbar-actions">
+    <span id="sync-status" class="sync-status">Not synced yet</span>
+    <button id="sync-btn" class="btn btn-primary">Sync now</button>
+    <button id="settings-btn" class="btn btn-icon" title="Settings" aria-label="Settings">⚙️</button>
+  </div>
+</header>
+
+<main>
+  <section class="calendar-section">
+    <div class="calendar-header">
+      <button id="prev-month" class="btn btn-icon" aria-label="Previous month">‹</button>
+      <h2 id="month-label">Month Year</h2>
+      <button id="next-month" class="btn btn-icon" aria-label="Next month">›</button>
+      <button id="today-btn" class="btn btn-ghost">Today</button>
+    </div>
+    <div class="calendar-grid" id="calendar-weekdays">
+      <div class="weekday">Sun</div>
+      <div class="weekday">Mon</div>
+      <div class="weekday">Tue</div>
+      <div class="weekday">Wed</div>
+      <div class="weekday">Thu</div>
+      <div class="weekday">Fri</div>
+      <div class="weekday">Sat</div>
+    </div>
+    <div class="calendar-grid" id="calendar-days"></div>
+  </section>
+
+  <section class="list-section">
+    <h2>Upcoming releases</h2>
+    <div id="upcoming-list" class="upcoming-list">
+      <p class="empty-state">No data yet. Open Settings to connect your Goodreads To-Read shelf.</p>
+    </div>
+  </section>
+</main>
+
+<div id="settings-overlay" class="overlay hidden"></div>
+<aside id="settings-panel" class="settings-panel hidden">
+  <div class="settings-header">
+    <h2>Settings</h2>
+    <button id="close-settings" class="btn btn-icon" aria-label="Close settings">✕</button>
+  </div>
+
+  <div class="settings-body">
+    <section class="settings-group">
+      <h3>Goodreads shelf</h3>
+      <p class="hint">
+        Go to your <strong>To-Read</strong> shelf on Goodreads, scroll to the bottom of the page,
+        and copy the link behind the small orange <strong>RSS</strong> icon. Paste the full URL below —
+        it works even if your profile is private, and needs no password or login.
+      </p>
+      <label for="rss-url">Shelf RSS URL</label>
+      <input type="text" id="rss-url" placeholder="https://www.goodreads.com/review/list_rss/12345678?shelf=to-read&key=..." />
+
+      <label for="proxy-url">CORS proxy (advanced)</label>
+      <input type="text" id="proxy-url" placeholder="https://proxy.corsfix.com/?" />
+      <p class="hint small">Only change this if syncing stops working — public proxies occasionally go down. It must accept the shelf URL appended directly after this value (not URL-encoded).</p>
+    </section>
+
+    <section class="settings-group">
+      <h3>Release dates</h3>
+      <p class="hint">
+        Goodreads often only stores a book's original publish year, not a future
+        edition's date, so release dates come from
+        <a href="https://hardcover.app/" target="_blank" rel="noopener">Hardcover</a>,
+        a book-tracking site that keeps accurate upcoming release dates. Create a free
+        account, open your account settings → <strong>Hardcover API</strong>, click
+        <strong>New API Key</strong>, and paste it below.
+      </p>
+      <label for="hardcover-token">Hardcover API Key</label>
+      <input type="text" id="hardcover-token" placeholder="" />
+    </section>
+
+    <section class="settings-group">
+      <h3>Email notifications</h3>
+      <p class="hint">
+        Get a short email the moment you open the app on a day a book is released.
+        This uses <a href="https://www.emailjs.com/" target="_blank" rel="noopener">EmailJS</a>,
+        a free service that sends email straight from your browser — no server needed.
+        Create a free account, add an email service and a template with a <code>{{message}}</code> variable,
+        then paste your keys below.
+      </p>
+      <label for="notify-email">Notify this email address</label>
+      <input type="email" id="notify-email" placeholder="you@example.com" />
+
+      <label for="emailjs-public-key">EmailJS Public Key</label>
+      <input type="text" id="emailjs-public-key" placeholder="" />
+
+      <label for="emailjs-service-id">EmailJS Service ID</label>
+      <input type="text" id="emailjs-service-id" placeholder="" />
+
+      <label for="emailjs-template-id">EmailJS Template ID</label>
+      <input type="text" id="emailjs-template-id" placeholder="" />
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="notify-enabled" />
+        Email me when a book releases today
+      </label>
+      <button id="send-test-email" class="btn btn-ghost">Send test email</button>
+    </section>
+
+    <div class="settings-actions">
+      <button id="save-settings" class="btn btn-primary">Save settings</button>
+      <span id="save-confirm" class="save-confirm hidden">Saved ✓</span>
+    </div>
+  </div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

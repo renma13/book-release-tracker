@@ -1,0 +1,81 @@
+# Shelf Watch
+
+A tiny, static app that watches your Goodreads "To-Read" shelf and shows you
+upcoming book release dates on a calendar — no manual re-importing needed.
+
+## How it works
+
+- **Syncing without an API**: Goodreads shut down its public API, and a static
+  site can't read goodreads.com's cookies (different domain, browsers block that).
+  What *does* work: every shelf — including private ones — has an RSS feed URL
+  containing a secret token. Paste that URL once and the app keeps re-fetching
+  it automatically through a CORS proxy (a small relay that lets browser code
+  read pages from other sites).
+- **Release dates**: Goodreads' feed often only has a book's *original* publish
+  year, not a future edition's date, so each book is also looked up via the
+  [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps
+  accurate upcoming release dates — using your own free API key.
+- **Email on release day**: since GitHub Pages only serves static files (no
+  background server), the app checks for today's releases whenever you open it,
+  and sends a plain-text email via EmailJS (a free service that sends mail
+  straight from the browser) if something is out today.
+
+## Setup
+
+### 1. Get your shelf's RSS URL
+1. Go to your Goodreads profile → **My Books** → **To-Read** shelf.
+2. Scroll to the very bottom of the page.
+3. Right-click the small orange **RSS** link and copy its URL.
+4. It'll look like `https://www.goodreads.com/review/list_rss/12345678?shelf=to-read&key=...`
+
+### 2. Get a Hardcover API key (for release dates)
+1. Create a free account at [hardcover.app](https://hardcover.app/).
+2. Go to your account settings → **Hardcover API**.
+3. Click **New API Key** and copy it.
+
+### 3. Set up email notifications (optional)
+1. Create a free account at [emailjs.com](https://www.emailjs.com/).
+2. Add an **Email Service** (e.g. connect your Gmail).
+3. Create an **Email Template** with a `{{message}}` variable in the body, and
+   `{{to_email}}` as the recipient field.
+4. From the EmailJS dashboard, grab your **Public Key**, **Service ID**, and
+   **Template ID**.
+
+### 4. Configure the app
+1. Open the app and click the ⚙️ Settings icon.
+2. Paste your shelf RSS URL and your Hardcover API key.
+3. If you set up email, paste your EmailJS keys and the address you want
+   notified, then check "Email me when a book releases today".
+4. Click **Save settings**, then **Sync now**.
+
+## Hosting on GitHub Pages
+
+```bash
+git init
+git add .
+git commit -m "Initial Shelf Watch app"
+git branch -M main
+git remote add origin <your-repo-url>
+git push -u origin main
+```
+
+Then in the repo's GitHub Settings → Pages, set the source to the `main`
+branch, root folder. Your app will be live at
+`https://<your-username>.github.io/<repo-name>/`.
+
+## Notes and limitations
+
+- All your settings and synced book data are stored only in your browser's
+  local storage — nothing is sent to any server you don't control (other than
+  the CORS proxy fetching your public RSS URL, Hardcover for release dates,
+  and EmailJS sending your emails).
+- The email check only runs when you actually open the app — there's no
+  background process on GitHub Pages to send it automatically at midnight.
+- If syncing suddenly stops working, the public CORS proxy may be down —
+  swap the "CORS proxy" field in Settings for another one (any service that
+  fetches a URL and returns its raw response works).
+- Release dates aren't guaranteed for every book — some upcoming titles simply
+  don't have a publish date on Hardcover yet.
+- On a shelf with many unresolved books, only 30 release-date lookups run per
+  sync (to stay within Hardcover's rate limit) — the rest fill in over the
+  next few syncs.

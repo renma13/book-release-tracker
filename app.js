@@ -27,8 +27,10 @@ const FALLBACK_PROXIES = [
   (url) => "https://proxy.corsfix.com/?" + url, // gives new domains a limited free trial, then requires a paid plan
 ];
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const LOOKUP_BATCH_LIMIT = 30; // cap release-date lookups per sync so large shelves don't stall or hit API rate limits
-const MAX_CONSECUTIVE_LOOKUP_FAILURES = 5; // stop this batch early if the lookup API is rate-limiting us
+// Hardcover's API allows 60 requests/min; pace lookups a bit under that so one
+// sync can resolve an entire shelf without tripping the limit.
+const LOOKUP_DELAY_MS = 1100;
+const MAX_CONSECUTIVE_LOOKUP_FAILURES = 5; // stop early if the lookup API is down/rejecting us, rather than failing on every remaining book
 
 let state = {
   settings: loadSettings(),
@@ -187,12 +189,17 @@ async function sync(manual) {
       });
     }
 
-    // Look up release dates only for books we haven't resolved yet, capped per
-    // sync so a large shelf doesn't stall the UI or get rate-limited into oblivion.
-    const unresolved = merged.filter((b) => b.releaseDate === undefined);
-    const batch = state.settings.hardcoverToken ? unresolved.slice(0, LOOKUP_BATCH_LIMIT) : [];
+    // Look up release dates for every book we haven't resolved yet, paced to stay
+    // under Hardcover's rate limit so one sync can finish the whole shelf instead
+    // of requiring repeated manual syncs.
+    const batch = state.settings.hardcoverToken ? merged.filter((b) => b.releaseDate === undefined) : [];
     let consecutiveFailures = 0;
     let backoffMs = 1000;
+
+    // Save books (and the current partial lookup progress) up front, so closing
+    // the tab mid-sync on a big shelf doesn't lose what's already been resolved.
+    state.books = merged;
+    saveBooks(merged);
 
     for (let i = 0; i < batch.length; i++) {
       const book = batch[i];
@@ -215,12 +222,11 @@ async function sync(manual) {
         backoffMs = 1000;
         book.releaseDate = result;
       }
+      saveBooks(merged);
       if (consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) break;
-      await sleep(300); // be polite to the Hardcover API's rate limit
+      await sleep(LOOKUP_DELAY_MS);
     }
 
-    state.books = merged;
-    saveBooks(merged);
     localStorage.setItem(STORAGE_KEYS.lastSync, Date.now().toString());
 
     render();
@@ -228,7 +234,7 @@ async function sync(manual) {
     const remaining = merged.filter((b) => b.releaseDate === undefined).length;
     const syncedNote = !state.settings.hardcoverToken
       ? " (add a Hardcover API key in Settings to fetch release dates)"
-      : remaining ? ` (${remaining} more to look up next sync)` : "";
+      : remaining ? ` (${remaining} couldn't be looked up — will retry next sync)` : "";
     syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + syncedNote;
   } catch (err) {
     console.error(err);

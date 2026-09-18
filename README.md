@@ -97,6 +97,7 @@ branch, root folder. Your app will be live at
   above. It's the difference between "usually works" and "always works."
 - Release dates aren't guaranteed for every book — some upcoming titles simply
   don't have a publish date on Hardcover yet.
-- On a shelf with many unresolved books, only 30 release-date lookups run per
-  sync (to stay within Hardcover's rate limit) — the rest fill in over the
-  next few syncs.
+- A sync looks up release dates for every book that doesn't have one yet, paced
+  to stay under Hardcover's rate limit — so a large shelf's first sync can take
+  a couple of minutes, but you shouldn't need to click "Sync now" repeatedly.
+  Progress is saved as it goes, so closing the app partway through doesn't lose it.

@@ -339,16 +339,6 @@ input[type="text"]:focus, input[type="email"]:focus {
   border-color: var(--teal);
 }
 
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink);
-  margin-top: 14px;
-}
-.checkbox-row input { width: auto; }
-
 .settings-actions {
   display: flex;
   align-items: center;
@@ -364,7 +354,72 @@ input[type="text"]:focus, input[type="email"]:focus {
 .save-confirm.hidden { display: none; }
 
 @media (max-width: 600px) {
-  .topbar { flex-wrap: wrap; gap: 10px; padding: 14px 16px; }
-  .day-cell { min-height: 70px; }
-  .mini-cover { width: 18px; height: 26px; }
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .topbar-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .sync-status {
+    max-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+
+  main {
+    padding: 16px 10px 40px;
+  }
+
+  .calendar-section {
+    padding: 12px;
+  }
+
+  .calendar-header {
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .calendar-header h2 {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+  .calendar-header .btn-icon {
+    padding: 7px 10px;
+    font-size: 14px;
+  }
+  .calendar-header .btn-ghost {
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+
+  .calendar-grid { gap: 3px; }
+  .weekday { font-size: 10px; padding-bottom: 4px; }
+
+  .day-cell {
+    min-height: 58px;
+    padding: 3px;
+    border-radius: 7px;
+    gap: 2px;
+  }
+  .day-number { font-size: 10px; }
+  .day-books { gap: 2px; }
+  .mini-cover { width: 16px; height: 23px; }
+
+  .list-section { margin-top: 24px; }
+  .list-section h2 { font-size: 18px; }
+
+  .book-row {
+    padding: 8px 10px;
+    gap: 10px;
+  }
+  .book-row img { width: 38px; height: 55px; }
+  .book-title { font-size: 14px; }
+  .book-author { font-size: 12px; }
+  .book-date { font-size: 12px; }
+
+  .settings-header { padding: 16px 18px; }
+  .settings-body { padding: 16px 18px; }
 }

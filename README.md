@@ -17,10 +17,6 @@ upcoming book release dates on a calendar — no manual re-importing needed.
   year, not a future edition's date, so each book is also looked up via the
   [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps
   accurate upcoming release dates — using your own free API key.
-- **Email on release day**: since GitHub Pages only serves static files (no
-  background server), the app checks for today's releases whenever you open it,
-  and sends a plain-text email via EmailJS (a free service that sends mail
-  straight from the browser) if something is out today.
 
 ## Setup
 
@@ -35,27 +31,10 @@ upcoming book release dates on a calendar — no manual re-importing needed.
 2. Go to your account settings → **Hardcover API**.
 3. Click **New API Key** and copy it.
 
-### 3. Set up email notifications (optional)
-1. Create a free account at [emailjs.com](https://www.emailjs.com/).
-2. Add an **Email Service** (e.g. connect your Gmail).
-3. Create an **Email Template** using `{{to_email}}` as the recipient field, and
-   any of these variables in the subject/body:
-   - `{{message}}` — a ready-made summary (handles multiple same-day releases too)
-   - `{{book_title}}` — the released book's title
-   - `{{book_author}}` — its author
-   - `{{book_count}}` — how many books released today
-
-   For example, a subject line of `📚 {{book_title}} is out today!` with
-   `{{message}}` in the body works well.
-4. From the EmailJS dashboard, grab your **Public Key**, **Service ID**, and
-   **Template ID**.
-
-### 4. Configure the app
+### 3. Configure the app
 1. Open the app and click the ⚙️ Settings icon.
 2. Paste your shelf RSS URL and your Hardcover API key.
-3. If you set up email, paste your EmailJS keys and the address you want
-   notified, then check "Email me when a book releases today".
-4. Click **Save settings**, then **Sync now**.
+3. Click **Save settings**, then **Sync now**.
 
 ## Reliable syncing (recommended)
 
@@ -96,10 +75,7 @@ branch, root folder. Your app will be live at
 
 - All your settings and synced book data are stored only in your browser's
   local storage — nothing is sent to any server you don't control (other than
-  the CORS proxy fetching your public RSS URL, Hardcover for release dates,
-  and EmailJS sending your emails).
-- The email check only runs when you actually open the app — there's no
-  background process on GitHub Pages to send it automatically at midnight.
+  the CORS proxy fetching your public RSS URL, and Hardcover for release dates).
 - If syncing is unreliable, set up your own proxy — see **Reliable syncing**
   above. It's the difference between "usually works" and "always works."
 - Release dates aren't guaranteed for every book — some upcoming titles simply

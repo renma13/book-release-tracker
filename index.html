@@ -94,38 +94,6 @@
       <input type="text" id="hardcover-token" placeholder="" />
     </section>
 
-    <section class="settings-group">
-      <h3>Email notifications</h3>
-      <p class="hint">
-        Get a short email the moment you open the app on a day a book is released.
-        This uses <a href="https://www.emailjs.com/" target="_blank" rel="noopener">EmailJS</a>,
-        a free service that sends email straight from your browser — no server needed.
-        Create a free account and an email service, then build a template using
-        any of these variables: <code>{{message}}</code> (a ready-made summary —
-        handles multiple same-day releases too), <code>{{book_title}}</code>,
-        <code>{{book_author}}</code>, and <code>{{book_count}}</code>. For example,
-        put <code>📚 {{book_title}} is out today!</code> in the subject line.
-        Paste your keys below once the template's set up.
-      </p>
-      <label for="notify-email">Notify this email address</label>
-      <input type="email" id="notify-email" placeholder="you@example.com" />
-
-      <label for="emailjs-public-key">EmailJS Public Key</label>
-      <input type="text" id="emailjs-public-key" placeholder="" />
-
-      <label for="emailjs-service-id">EmailJS Service ID</label>
-      <input type="text" id="emailjs-service-id" placeholder="" />
-
-      <label for="emailjs-template-id">EmailJS Template ID</label>
-      <input type="text" id="emailjs-template-id" placeholder="" />
-
-      <label class="checkbox-row">
-        <input type="checkbox" id="notify-enabled" />
-        Email me when a book releases today
-      </label>
-      <button id="send-test-email" class="btn btn-ghost">Send test email</button>
-    </section>
-
     <div class="settings-actions">
       <button id="save-settings" class="btn btn-primary">Save settings</button>
       <span id="save-confirm" class="save-confirm hidden">Saved ✓</span>
@@ -133,7 +101,6 @@
   </div>
 </aside>
 
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

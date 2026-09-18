@@ -15,7 +15,6 @@ const STORAGE_KEYS = {
   settings: "shelfwatch_settings",
   books: "shelfwatch_books",
   lastSync: "shelfwatch_last_sync",
-  notified: "shelfwatch_notified_ids",
 };
 
 // Public CORS proxies are unreliable — free tiers expire, rate limits get hit,
@@ -64,18 +63,6 @@ function saveBooks(books) {
   localStorage.setItem(STORAGE_KEYS.books, JSON.stringify(books));
 }
 
-function loadNotifiedIds() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(STORAGE_KEYS.notified)) || []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveNotifiedIds(set) {
-  localStorage.setItem(STORAGE_KEYS.notified, JSON.stringify([...set]));
-}
-
 // ---------- Settings panel ----------
 
 const settingsPanel = document.getElementById("settings-panel");
@@ -86,11 +73,6 @@ function openSettings() {
   document.getElementById("rss-url").value = s.rssUrl || "";
   document.getElementById("proxy-url").value = s.proxyUrl || "";
   document.getElementById("hardcover-token").value = s.hardcoverToken || "";
-  document.getElementById("notify-email").value = s.notifyEmail || "";
-  document.getElementById("emailjs-public-key").value = s.emailjsPublicKey || "";
-  document.getElementById("emailjs-service-id").value = s.emailjsServiceId || "";
-  document.getElementById("emailjs-template-id").value = s.emailjsTemplateId || "";
-  document.getElementById("notify-enabled").checked = !!s.notifyEnabled;
   settingsPanel.classList.remove("hidden");
   settingsOverlay.classList.remove("hidden");
 }
@@ -109,58 +91,14 @@ document.getElementById("save-settings").addEventListener("click", () => {
     rssUrl: document.getElementById("rss-url").value.trim(),
     proxyUrl: document.getElementById("proxy-url").value.trim(),
     hardcoverToken: document.getElementById("hardcover-token").value.trim(),
-    notifyEmail: document.getElementById("notify-email").value.trim(),
-    emailjsPublicKey: document.getElementById("emailjs-public-key").value.trim(),
-    emailjsServiceId: document.getElementById("emailjs-service-id").value.trim(),
-    emailjsTemplateId: document.getElementById("emailjs-template-id").value.trim(),
-    notifyEnabled: document.getElementById("notify-enabled").checked,
   };
   state.settings = settings;
   saveSettings(settings);
-  initEmailJs();
 
   const confirm = document.getElementById("save-confirm");
   confirm.classList.remove("hidden");
   setTimeout(() => confirm.classList.add("hidden"), 2000);
 });
-
-document.getElementById("send-test-email").addEventListener("click", async () => {
-  try {
-    await sendEmail({
-      message: "Shelf Watch test: if you're reading this, notifications are working.",
-      book_title: "Example Book Title",
-      book_author: "Example Author",
-      book_count: 1,
-    });
-    alert("Test email sent — check your inbox.");
-  } catch (err) {
-    alert("Couldn't send test email: " + err.message);
-  }
-});
-
-function initEmailJs() {
-  if (window.emailjs && state.settings.emailjsPublicKey) {
-    emailjs.init({ publicKey: state.settings.emailjsPublicKey });
-  }
-}
-
-// `params` becomes the template variables available in EmailJS: at minimum
-// {{message}}, plus (when known) {{book_title}}, {{book_author}}, and
-// {{book_count}} — use these in your template's subject or body, e.g.
-// "📚 {{book_title}} is out today!" instead of just {{message}}.
-async function sendEmail(params) {
-  const s = state.settings;
-  if (!s.emailjsPublicKey || !s.emailjsServiceId || !s.emailjsTemplateId) {
-    throw new Error("EmailJS is not fully configured in Settings.");
-  }
-  if (!s.notifyEmail) {
-    throw new Error("No recipient email set in Settings.");
-  }
-  return emailjs.send(s.emailjsServiceId, s.emailjsTemplateId, {
-    to_email: s.notifyEmail,
-    ...params,
-  });
-}
 
 // ---------- Syncing from Goodreads RSS ----------
 
@@ -239,7 +177,6 @@ async function sync(manual) {
     localStorage.setItem(STORAGE_KEYS.lastSync, Date.now().toString());
 
     render();
-    checkAndNotifyTodayReleases();
     const remaining = merged.filter((b) => b.releaseDate === undefined).length;
     const syncedNote = !state.settings.hardcoverToken
       ? " (add a Hardcover API key in Settings to fetch release dates)"
@@ -376,36 +313,6 @@ async function hardcoverQuery(token, query, variables) {
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0]?.message || "Hardcover API error");
   return json.data;
-}
-
-// ---------- Email notification on release day ----------
-
-function checkAndNotifyTodayReleases() {
-  if (!state.settings.notifyEnabled) return;
-  const today = new Date().toISOString().slice(0, 10);
-  const notified = loadNotifiedIds();
-  const releasingToday = state.books.filter((b) => b.releaseDate === today && !notified.has(b.id));
-
-  if (releasingToday.length === 0) return;
-
-  const message = releasingToday.length === 1
-    ? `"${releasingToday[0].title}" by ${releasingToday[0].author} is out today!`
-    : `Out today:\n` + releasingToday.map((b) => `- "${b.title}" by ${b.author}`).join("\n");
-
-  // book_title/book_author cover the common case (one release); for multiple
-  // releases in one day they hold just the first, so templates that want all
-  // of them should use {{message}}, which lists every title.
-  sendEmail({
-    message,
-    book_title: releasingToday[0].title,
-    book_author: releasingToday[0].author,
-    book_count: releasingToday.length,
-  })
-    .then(() => {
-      releasingToday.forEach((b) => notified.add(b.id));
-      saveNotifiedIds(notified);
-    })
-    .catch((err) => console.warn("Release notification email failed:", err.message));
 }
 
 // ---------- Calendar rendering ----------
@@ -551,15 +458,10 @@ function escapeHtml(str) {
 // ---------- Init ----------
 
 function init() {
-  initEmailJs();
   render();
 
   const lastSync = Number(localStorage.getItem(STORAGE_KEYS.lastSync) || 0);
   const dueForAutoSync = Date.now() - lastSync > SYNC_INTERVAL_MS;
-
-  if (state.books.length) {
-    checkAndNotifyTodayReleases();
-  }
 
   if (state.settings.rssUrl && dueForAutoSync) {
     sync(false);

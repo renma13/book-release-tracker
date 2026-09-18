@@ -18,7 +18,14 @@ const STORAGE_KEYS = {
   notified: "shelfwatch_notified_ids",
 };
 
-const DEFAULT_PROXY = "https://proxy.corsfix.com/?";
+// Public CORS proxies are unreliable — free tiers expire, rate limits get hit,
+// services disappear. If the user hasn't set their own proxy (see proxy-worker.js
+// for a permanent free one), we try a few public fallbacks in turn.
+const FALLBACK_PROXIES = [
+  (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
+  (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+  (url) => "https://proxy.corsfix.com/?" + url, // gives new domains a limited free trial, then requires a paid plan
+];
 const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const LOOKUP_BATCH_LIMIT = 30; // cap release-date lookups per sync so large shelves don't stall or hit API rate limits
 const MAX_CONSECUTIVE_LOOKUP_FAILURES = 5; // stop this batch early if the lookup API is rate-limiting us
@@ -75,7 +82,7 @@ const settingsOverlay = document.getElementById("settings-overlay");
 function openSettings() {
   const s = state.settings;
   document.getElementById("rss-url").value = s.rssUrl || "";
-  document.getElementById("proxy-url").value = s.proxyUrl || DEFAULT_PROXY;
+  document.getElementById("proxy-url").value = s.proxyUrl || "";
   document.getElementById("hardcover-token").value = s.hardcoverToken || "";
   document.getElementById("notify-email").value = s.notifyEmail || "";
   document.getElementById("emailjs-public-key").value = s.emailjsPublicKey || "";
@@ -98,7 +105,7 @@ settingsOverlay.addEventListener("click", closeSettings);
 document.getElementById("save-settings").addEventListener("click", () => {
   const settings = {
     rssUrl: document.getElementById("rss-url").value.trim(),
-    proxyUrl: document.getElementById("proxy-url").value.trim() || DEFAULT_PROXY,
+    proxyUrl: document.getElementById("proxy-url").value.trim(),
     hardcoverToken: document.getElementById("hardcover-token").value.trim(),
     notifyEmail: document.getElementById("notify-email").value.trim(),
     emailjsPublicKey: document.getElementById("emailjs-public-key").value.trim(),
@@ -163,10 +170,7 @@ async function sync(manual) {
   syncBtn.disabled = true;
 
   try {
-    const proxy = s.proxyUrl || DEFAULT_PROXY;
-    const res = await fetch(proxy + s.rssUrl);
-    if (!res.ok) throw new Error("Proxy/feed request failed (" + res.status + ")");
-    const text = await res.text();
+    const text = await fetchShelfRss(s.rssUrl, s.proxyUrl);
     const items = parseGoodreadsRss(text);
 
     if (items.length === 0) {
@@ -232,6 +236,40 @@ async function sync(manual) {
   } finally {
     syncBtn.disabled = false;
   }
+}
+
+// Tries the user's own proxy first (if set), then falls back through a list of
+// public proxies, since any single free proxy can be rate-limited, paywalled,
+// or offline on a given day. Returns the raw RSS text from whichever succeeds.
+async function fetchShelfRss(rssUrl, customProxy) {
+  const attempts = customProxy
+    ? [(url) => customProxy + encodeURIComponent(url), ...FALLBACK_PROXIES]
+    : FALLBACK_PROXIES;
+
+  const errors = [];
+  for (let i = 0; i < attempts.length; i++) {
+    syncStatus.textContent = attempts.length > 1 ? `Syncing… (trying proxy ${i + 1}/${attempts.length})` : "Syncing…";
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 10000); // don't let one dead proxy stall the whole sync
+    try {
+      const res = await fetch(attempts[i](rssUrl), { signal: ctrl.signal });
+      if (!res.ok) {
+        errors.push(`(${res.status})`);
+        continue;
+      }
+      const text = await res.text();
+      if (!text.includes("<rss")) {
+        errors.push("(bad response)");
+        continue;
+      }
+      return text;
+    } catch {
+      errors.push("(unreachable or timed out)");
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error("All proxies failed " + errors.join(" "));
 }
 
 function parseGoodreadsRss(xmlText) {

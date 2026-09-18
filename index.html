@@ -68,9 +68,16 @@
       <label for="rss-url">Shelf RSS URL</label>
       <input type="text" id="rss-url" placeholder="https://www.goodreads.com/review/list_rss/12345678?shelf=to-read&key=..." />
 
-      <label for="proxy-url">CORS proxy (advanced)</label>
-      <input type="text" id="proxy-url" placeholder="https://proxy.corsfix.com/?" />
-      <p class="hint small">Only change this if syncing stops working — public proxies occasionally go down. It must accept the shelf URL appended directly after this value (not URL-encoded).</p>
+      <label for="proxy-url">Your own CORS proxy (optional, but recommended)</label>
+      <input type="text" id="proxy-url" placeholder="https://your-worker.you.workers.dev/?url=" />
+      <p class="hint small">
+        By default, syncing tries a few public proxies in turn — free, but
+        occasionally slow, rate-limited, or offline. For reliable syncing,
+        deploy the tiny free proxy in <code>proxy-worker.js</code> (included in
+        this project) to your own
+        <a href="https://workers.cloudflare.com/" target="_blank" rel="noopener">Cloudflare Worker</a>
+        (a few clicks, no cost) and paste its URL here.
+      </p>
     </section>
 
     <section class="settings-group">

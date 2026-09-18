@@ -10,7 +10,9 @@ upcoming book release dates on a calendar — no manual re-importing needed.
   What *does* work: every shelf — including private ones — has an RSS feed URL
   containing a secret token. Paste that URL once and the app keeps re-fetching
   it automatically through a CORS proxy (a small relay that lets browser code
-  read pages from other sites).
+  read pages from other sites). Free public proxies are flaky (rate limits,
+  trial periods, outages), so the app tries several in turn automatically —
+  see **Reliable syncing** below for a permanent fix.
 - **Release dates**: Goodreads' feed often only has a book's *original* publish
   year, not a future edition's date, so each book is also looked up via the
   [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps
@@ -48,6 +50,26 @@ upcoming book release dates on a calendar — no manual re-importing needed.
    notified, then check "Email me when a book releases today".
 4. Click **Save settings**, then **Sync now**.
 
+## Reliable syncing (recommended)
+
+Out of the box, syncing tries a handful of public CORS proxies in turn. That
+works, but those proxies are shared by everyone using them, so they're
+sometimes slow, rate-limited, or temporarily down — and a couple require
+paid plans once a free trial period ends. For syncing that won't randomly
+break:
+
+1. Go to [workers.cloudflare.com](https://workers.cloudflare.com/) and sign
+   up (free, no card required).
+2. Create a new Worker, delete its sample code, and paste in the contents of
+   this project's [`proxy-worker.js`](proxy-worker.js).
+3. Deploy it. Copy the Worker's URL — it looks like
+   `https://shelf-watch-proxy.<you>.workers.dev`.
+4. In Shelf Watch's Settings, paste `https://shelf-watch-proxy.<you>.workers.dev/?url=`
+   into the "Your own CORS proxy" field (keep the trailing `/?url=`) and save.
+
+This Worker is entirely yours — it only ever proxies goodreads.com, and
+Cloudflare's free tier (100,000 requests/day) is far more than this app needs.
+
 ## Hosting on GitHub Pages
 
 ```bash
@@ -71,9 +93,8 @@ branch, root folder. Your app will be live at
   and EmailJS sending your emails).
 - The email check only runs when you actually open the app — there's no
   background process on GitHub Pages to send it automatically at midnight.
-- If syncing suddenly stops working, the public CORS proxy may be down —
-  swap the "CORS proxy" field in Settings for another one (any service that
-  fetches a URL and returns its raw response works).
+- If syncing is unreliable, set up your own proxy — see **Reliable syncing**
+  above. It's the difference between "usually works" and "always works."
 - Release dates aren't guaranteed for every book — some upcoming titles simply
   don't have a publish date on Hardcover yet.
 - On a shelf with many unresolved books, only 30 release-date lookups run per

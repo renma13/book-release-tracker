@@ -533,10 +533,11 @@ async function lookupBookMetadata(book) {
         query LookupByIsbn($isbn: String!) {
           editions(where: {_or: [{isbn_13: {_eq: $isbn}}, {isbn_10: {_eq: $isbn}}]}, limit: 1) {
             release_date
+            cached_image
             book {
               id
               release_date
-              cached_image(path: "url")
+              cached_image
               cached_tags(path: "$.Genre")
             }
           }
@@ -546,7 +547,7 @@ async function lookupBookMetadata(book) {
       if (edition) {
         return {
           releaseDate: edition.release_date || edition.book?.release_date || null,
-          cover: normalizeCoverUrl(edition.book?.cached_image),
+          cover: normalizeCoverUrl(edition.cached_image) || normalizeCoverUrl(edition.book?.cached_image),
           genres: normalizeHardcoverGenres(edition.book?.cached_tags),
         };
       }
@@ -586,7 +587,7 @@ async function lookupHardcoverBookDetails(token, id) {
     query BookDetails($id: Int!) {
       books_by_pk(id: $id) {
         release_date
-        cached_image(path: "url")
+        cached_image
         cached_tags(path: "$.Genre")
       }
     }
@@ -692,12 +693,14 @@ function renderCalendar() {
       const row = document.createElement("div");
       row.className = "day-books";
       booksToday.forEach((b) => {
-        if (b.cover) {
+        const cover = getCoverUrl(b);
+        if (cover) {
           const img = document.createElement("img");
-          img.src = b.cover;
+          img.src = cover;
           img.alt = b.title;
           img.title = `${b.title} — ${b.author}`;
           img.className = "mini-cover" + (dateKey < todayKey ? " released" : "");
+          img.addEventListener("error", () => img.remove(), { once: true });
           row.appendChild(linkWrap(img, b.link));
         }
       });
@@ -860,19 +863,36 @@ function linkWrap(content, link) {
 }
 
 function createCover(book, className) {
-  if (book.cover) {
+  const cover = getCoverUrl(book);
+  if (cover) {
     const img = document.createElement("img");
-    img.src = book.cover;
+    img.src = cover;
     img.alt = book.title;
     img.className = className;
+    img.addEventListener("error", () => {
+      img.replaceWith(createCoverPlaceholder(book, className));
+    }, { once: true });
     return img;
   }
 
+  return createCoverPlaceholder(book, className);
+}
+
+function createCoverPlaceholder(book, className) {
   const fallback = document.createElement("div");
   fallback.className = `${className} cover-placeholder`;
   fallback.setAttribute("aria-label", book.title);
   fallback.textContent = "No cover";
   return fallback;
+}
+
+function getCoverUrl(book) {
+  return book.cover || getOpenLibraryCoverUrl(book.isbn);
+}
+
+function getOpenLibraryCoverUrl(isbn) {
+  const clean = cleanIsbn(isbn);
+  return clean ? `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(clean)}-L.jpg?default=false` : "";
 }
 
 function escapeHtml(str) {

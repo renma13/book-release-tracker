@@ -1,11 +1,13 @@
 // Shelf Watch — tracks upcoming release dates for books on a Goodreads "To-Read" shelf.
 //
 // How syncing works:
-// Goodreads has no public API anymore. Every shelf (including private ones) has an
-// RSS feed URL containing a secret token, found at the bottom of the shelf page on
-// goodreads.com behind the small "RSS" link. That URL acts like a saved credential —
-// paste it once in Settings and this app can keep re-fetching it through a CORS proxy
-// (plain browser JS can't call goodreads.com directly due to CORS).
+// Import a Goodreads CSV once to seed the remembered To-Read shelf. Goodreads has
+// no public API anymore, so ongoing updates come from the shelf RSS URL containing
+// a secret token, found at the bottom of the shelf page on goodreads.com behind
+// the small "RSS" link. That URL acts like a saved credential — paste it once in
+// Settings and this app can keep re-fetching it through a CORS proxy (plain
+// browser JS can't call goodreads.com directly due to CORS). RSS syncs are merged
+// into the remembered CSV books so duplicates are ignored and new books are added.
 //
 // Release dates: Goodreads RSS often only has the original publish year, not a
 // future edition's release date, so each book is looked up via the Hardcover API
@@ -15,6 +17,7 @@ const STORAGE_KEYS = {
   settings: "shelfwatch_settings",
   books: "shelfwatch_books",
   lastSync: "shelfwatch_last_sync",
+  csvImport: "shelfwatch_csv_import",
 };
 
 // Public CORS proxies are unreliable — free tiers expire, rate limits get hit,
@@ -73,6 +76,7 @@ function openSettings() {
   document.getElementById("rss-url").value = s.rssUrl || "";
   document.getElementById("proxy-url").value = s.proxyUrl || "";
   document.getElementById("hardcover-token").value = s.hardcoverToken || "";
+  renderCsvImportStatus();
   settingsPanel.classList.remove("hidden");
   settingsOverlay.classList.remove("hidden");
 }
@@ -85,6 +89,11 @@ function closeSettings() {
 document.getElementById("settings-btn").addEventListener("click", openSettings);
 document.getElementById("close-settings").addEventListener("click", closeSettings);
 settingsOverlay.addEventListener("click", closeSettings);
+
+const csvImport = document.getElementById("csv-import");
+const csvImportStatus = document.getElementById("csv-import-status");
+
+csvImport.addEventListener("change", importGoodreadsCsv);
 
 document.getElementById("save-settings").addEventListener("click", () => {
   const settings = {
@@ -99,6 +108,199 @@ document.getElementById("save-settings").addEventListener("click", () => {
   confirm.classList.remove("hidden");
   setTimeout(() => confirm.classList.add("hidden"), 2000);
 });
+
+async function importGoodreadsCsv(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  csvImport.disabled = true;
+  csvImportStatus.textContent = "Reading CSV...";
+
+  try {
+    const text = await file.text();
+    const rows = parseCsv(text);
+    const books = rows
+      .filter(isToReadRow)
+      .map(bookFromGoodreadsCsvRow)
+      .filter((book) => book.title);
+
+    if (!books.length) {
+      throw new Error("No To-Read books found in that CSV.");
+    }
+
+    const before = state.books.length;
+    state.books = mergeRememberedBooks(state.books, books);
+    saveBooks(state.books);
+
+    const imported = state.books.length - before;
+    const importRecord = {
+      fileName: file.name,
+      importedAt: Date.now(),
+      totalToRead: books.length,
+      added: imported,
+    };
+    localStorage.setItem(STORAGE_KEYS.csvImport, JSON.stringify(importRecord));
+
+    render();
+    renderCsvImportStatus();
+    syncStatus.textContent = `Imported ${imported} new To-Read book${imported === 1 ? "" : "s"} from CSV`;
+  } catch (err) {
+    csvImportStatus.textContent = "CSV import failed: " + err.message;
+  } finally {
+    csvImport.disabled = false;
+    csvImport.value = "";
+  }
+}
+
+function renderCsvImportStatus() {
+  let record;
+  try {
+    record = JSON.parse(localStorage.getItem(STORAGE_KEYS.csvImport));
+  } catch {
+    record = null;
+  }
+
+  if (!record) {
+    csvImportStatus.textContent = "No CSV imported yet.";
+    return;
+  }
+
+  const when = new Date(record.importedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  csvImportStatus.textContent = `Last CSV import: ${record.totalToRead} To-Read books from ${record.fileName} on ${when}.`;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      i++;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  const [headers = [], ...data] = rows.filter((cells) => cells.some((value) => value.trim()));
+  return data.map((cells) => {
+    const item = {};
+    headers.forEach((header, index) => {
+      item[header.trim()] = cells[index]?.trim() || "";
+    });
+    return item;
+  });
+}
+
+function isToReadRow(row) {
+  const shelfValues = [
+    row["Exclusive Shelf"],
+    row["Bookshelves"],
+    row["Bookshelves with positions"],
+  ].join(",");
+  return splitShelfLabels(shelfValues).some((shelf) => shelf.toLowerCase().replace(/\s+/g, "-") === "to-read");
+}
+
+function bookFromGoodreadsCsvRow(row) {
+  const bookId = row["Book Id"] || "";
+  const isbn = cleanIsbn(row.ISBN13 || row.ISBN);
+  const author = row.Author || row["Author l-f"] || "";
+  const title = row.Title || "";
+  return {
+    id: bookId || isbn || `${title}|${author}`,
+    title,
+    author,
+    isbn,
+    cover: "",
+    genres: [],
+    link: bookId ? `https://www.goodreads.com/book/show/${bookId}` : "",
+    source: "csv",
+    loggedAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function cleanIsbn(value) {
+  return (value || "").replace(/[="'\s]/g, "");
+}
+
+function mergeRememberedBooks(existingBooks, incomingBooks) {
+  const index = buildBookIndex(existingBooks);
+  const merged = [...existingBooks];
+
+  for (const incoming of incomingBooks) {
+    const prior = findMatchingBook(index, incoming);
+    if (prior) {
+      Object.assign(prior, mergeBookData(prior, incoming));
+    } else {
+      merged.push(incoming);
+      addToBookIndex(index, incoming);
+    }
+  }
+
+  return merged;
+}
+
+function mergeBookData(prior, incoming) {
+  return {
+    ...prior,
+    ...incoming,
+    releaseDate: prior.releaseDate !== undefined ? prior.releaseDate : incoming.releaseDate,
+    genres: incoming.genres?.length ? incoming.genres : prior.genres || [],
+    cover: incoming.cover || prior.cover || "",
+    link: incoming.link || prior.link || "",
+    source: prior.source === "csv" && incoming.source === "rss" ? "csv+rss" : prior.source || incoming.source,
+    loggedAt: prior.loggedAt || incoming.loggedAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function buildBookIndex(books) {
+  const index = { ids: new Map(), isbns: new Map(), names: new Map() };
+  books.forEach((book) => addToBookIndex(index, book));
+  return index;
+}
+
+function addToBookIndex(index, book) {
+  if (book.id) index.ids.set(String(book.id), book);
+  if (book.isbn) index.isbns.set(cleanIsbn(book.isbn), book);
+  const name = bookNameKey(book);
+  if (name) index.names.set(name, book);
+}
+
+function findMatchingBook(index, book) {
+  return (book.id && index.ids.get(String(book.id)))
+    || (book.isbn && index.isbns.get(cleanIsbn(book.isbn)))
+    || index.names.get(bookNameKey(book));
+}
+
+function bookNameKey(book) {
+  return [book.title, book.author]
+    .map((value) => (value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim())
+    .filter(Boolean)
+    .join("|");
+}
 
 // ---------- Syncing from Goodreads RSS ----------
 
@@ -126,16 +328,31 @@ async function sync(manual) {
       throw new Error("No books found — check the RSS URL is your To-Read shelf.");
     }
 
-    const existing = new Map(state.books.map((b) => [b.id, b]));
-    const merged = [];
+    const existing = buildBookIndex(state.books);
+    const newBooks = [];
+    let duplicateCount = 0;
+
     for (const item of items) {
-      const prior = existing.get(item.id);
-      merged.push({
+      const prior = findMatchingBook(existing, item);
+      const book = {
+        ...prior,
         ...item,
         releaseDate: prior?.releaseDate !== undefined ? prior.releaseDate : undefined,
         genres: item.genres?.length ? item.genres : prior?.genres || [],
-      });
+        source: prior?.source || "rss",
+        loggedAt: prior?.loggedAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      if (prior) {
+        duplicateCount++;
+        Object.assign(prior, book);
+      } else {
+        newBooks.push(book);
+        addToBookIndex(existing, book);
+      }
     }
+    const merged = [...state.books, ...newBooks];
 
     // Look up Hardcover metadata for every book still missing release dates or
     // genre data, paced to stay under Hardcover's rate limit so one sync can
@@ -183,10 +400,11 @@ async function sync(manual) {
     render();
     const remaining = merged.filter((b) => b.releaseDate === undefined).length;
     const missingGenres = merged.filter((b) => !(b.genres || []).length).length;
+    const addedNote = newBooks.length ? ` Added ${newBooks.length} new RSS book${newBooks.length === 1 ? "" : "s"}.` : ` No new RSS books. ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} ignored.`;
     const syncedNote = !state.settings.hardcoverToken
       ? " (add a Hardcover API key in Settings to fetch release dates and genres)"
       : remaining || missingGenres ? ` (${Math.max(remaining, missingGenres)} couldn't be looked up — will retry next sync)` : "";
-    syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + syncedNote;
+    syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "." + addedNote + syncedNote;
   } catch (err) {
     console.error(err);
     syncStatus.textContent = "Sync failed: " + err.message;
@@ -653,6 +871,7 @@ function escapeHtml(str) {
 
 function init() {
   render();
+  renderCsvImportStatus();
 
   const lastSync = Number(localStorage.getItem(STORAGE_KEYS.lastSync) || 0);
   const dueForAutoSync = Date.now() - lastSync > SYNC_INTERVAL_MS;

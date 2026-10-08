@@ -80,6 +80,14 @@
     <section class="settings-group">
       <h3>Goodreads shelf</h3>
       <p class="hint">
+        First-time setup: export your Goodreads library CSV and import it here once.
+        Shelf Watch saves every To-Read book locally, then future RSS syncs only add new ones.
+      </p>
+      <label for="csv-import">Initial Goodreads CSV export</label>
+      <input type="file" id="csv-import" accept=".csv,text/csv" />
+      <p id="csv-import-status" class="hint small">No CSV imported yet.</p>
+
+      <p class="hint">
         Go to your <strong>To-Read</strong> shelf on Goodreads, scroll to the bottom of the page,
         and copy the link behind the small orange <strong>RSS</strong> icon. Paste the full URL below —
         it works even if your profile is private, and needs no password or login.

@@ -5,14 +5,19 @@ upcoming book release dates on a calendar — no manual re-importing needed.
 
 ## How it works
 
+- **One-time CSV memory**: Import your Goodreads library CSV once. Shelf Watch
+  filters it to the To-Read shelf and stores those books in your browser so it
+  remembers the shelf you already logged.
 - **Syncing without an API**: Goodreads shut down its public API, and a static
   site can't read goodreads.com's cookies (different domain, browsers block that).
   What *does* work: every shelf — including private ones — has an RSS feed URL
   containing a secret token. Paste that URL once and the app keeps re-fetching
   it automatically through a CORS proxy (a small relay that lets browser code
-  read pages from other sites). Free public proxies are flaky (rate limits,
-  trial periods, outages), so the app tries several in turn automatically —
-  see **Reliable syncing** below for a permanent fix.
+  read pages from other sites). Each RSS sync is compared against the remembered
+  CSV books, so duplicates are ignored and only new RSS books are added. Free
+  public proxies are flaky (rate limits, trial periods, outages), so the app
+  tries several in turn automatically — see **Reliable syncing** below for a
+  permanent fix.
 - **Release dates**: Goodreads' feed often only has a book's *original* publish
   year, not a future edition's date, so each book is also looked up via the
   [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps
@@ -23,21 +28,27 @@ upcoming book release dates on a calendar — no manual re-importing needed.
 
 ## Setup
 
-### 1. Get your shelf's RSS URL
+### 1. Export your Goodreads library CSV
+1. Go to Goodreads → **My Books**.
+2. Open **Import and export**.
+3. Export your library and download the CSV file.
+
+### 2. Get your shelf's RSS URL
 1. Go to your Goodreads profile → **My Books** → **To-Read** shelf.
 2. Scroll to the very bottom of the page.
 3. Right-click the small orange **RSS** link and copy its URL.
 4. It'll look like `https://www.goodreads.com/review/list_rss/12345678?shelf=to-read&key=...`
 
-### 2. Get a Hardcover API key (for release dates and genres)
+### 3. Get a Hardcover API key (for release dates and genres)
 1. Create a free account at [hardcover.app](https://hardcover.app/).
 2. Go to your account settings → **Hardcover API**.
 3. Click **New API Key** and copy it.
 
-### 3. Configure the app
+### 4. Configure the app
 1. Open the app and click the ⚙️ Settings icon.
-2. Paste your shelf RSS URL and your Hardcover API key.
-3. Click **Save settings**, then **Sync now**.
+2. Import your Goodreads CSV once.
+3. Paste your shelf RSS URL and your Hardcover API key.
+4. Click **Save settings**, then **Sync now**.
 
 ## Reliable syncing (recommended)
 

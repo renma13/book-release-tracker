@@ -442,7 +442,7 @@ label {
   margin: 12px 0 5px;
 }
 
-input[type="text"], input[type="email"], select {
+input[type="text"], input[type="email"], input[type="file"], select {
   width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--border);
@@ -466,7 +466,7 @@ select {
   background-size: 7px 7px, 7px 7px;
   background-repeat: no-repeat;
 }
-input[type="text"]:focus, input[type="email"]:focus, select:focus {
+input[type="text"]:focus, input[type="email"]:focus, input[type="file"]:focus, select:focus {
   outline: 2px solid var(--teal-soft);
   border-color: var(--teal);
 }

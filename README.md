@@ -17,6 +17,9 @@ upcoming book release dates on a calendar — no manual re-importing needed.
   year, not a future edition's date, so each book is also looked up via the
   [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps
   accurate upcoming release dates — using your own free API key.
+- **Next-read randomizer**: Goodreads RSS does not reliably include genre data,
+  so the same Hardcover lookup also saves genre tags. Use the randomizer section
+  to pick from any synced book, or filter by a genre first.
 
 ## Setup
 
@@ -26,7 +29,7 @@ upcoming book release dates on a calendar — no manual re-importing needed.
 3. Right-click the small orange **RSS** link and copy its URL.
 4. It'll look like `https://www.goodreads.com/review/list_rss/12345678?shelf=to-read&key=...`
 
-### 2. Get a Hardcover API key (for release dates)
+### 2. Get a Hardcover API key (for release dates and genres)
 1. Create a free account at [hardcover.app](https://hardcover.app/).
 2. Go to your account settings → **Hardcover API**.
 3. Click **New API Key** and copy it.
@@ -78,8 +81,8 @@ branch, root folder. Your app will be live at
   the CORS proxy fetching your public RSS URL, and Hardcover for release dates).
 - If syncing is unreliable, set up your own proxy — see **Reliable syncing**
   above. It's the difference between "usually works" and "always works."
-- Release dates aren't guaranteed for every book — some upcoming titles simply
-  don't have a publish date on Hardcover yet.
+- Release dates and genres aren't guaranteed for every book — some titles simply
+  don't have complete metadata on Hardcover yet.
 - A sync looks up release dates for every book that doesn't have one yet, paced
   to stay under Hardcover's rate limit — so a large shelf's first sync can take
   a couple of minutes, but you shouldn't need to click "Sync now" repeatedly.

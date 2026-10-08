@@ -133,13 +133,16 @@ async function sync(manual) {
       merged.push({
         ...item,
         releaseDate: prior?.releaseDate !== undefined ? prior.releaseDate : undefined,
+        genres: item.genres?.length ? item.genres : prior?.genres || [],
       });
     }
 
-    // Look up release dates for every book we haven't resolved yet, paced to stay
-    // under Hardcover's rate limit so one sync can finish the whole shelf instead
-    // of requiring repeated manual syncs.
-    const batch = state.settings.hardcoverToken ? merged.filter((b) => b.releaseDate === undefined) : [];
+    // Look up Hardcover metadata for every book still missing release dates or
+    // genre data, paced to stay under Hardcover's rate limit so one sync can
+    // finish the whole shelf instead of requiring repeated manual syncs.
+    const batch = state.settings.hardcoverToken
+      ? merged.filter((b) => b.releaseDate === undefined || !(b.genres || []).length)
+      : [];
     let consecutiveFailures = 0;
     let backoffMs = 1000;
 
@@ -150,15 +153,15 @@ async function sync(manual) {
 
     for (let i = 0; i < batch.length; i++) {
       const book = batch[i];
-      syncStatus.textContent = `Looking up release dates… ${i + 1}/${batch.length}`;
-      let result = await lookupReleaseDate(book);
+      syncStatus.textContent = `Looking up book details… ${i + 1}/${batch.length}`;
+      let result = await lookupBookMetadata(book);
 
       // Back off and retry a couple of times on rate limiting before giving up on this book.
       let retries = 0;
       while (result === undefined && retries < 2) {
         await sleep(backoffMs);
         backoffMs = Math.min(backoffMs * 2, 8000);
-        result = await lookupReleaseDate(book);
+        result = await lookupBookMetadata(book);
         retries++;
       }
 
@@ -167,7 +170,8 @@ async function sync(manual) {
       } else {
         consecutiveFailures = 0;
         backoffMs = 1000;
-        book.releaseDate = result;
+        if (result.releaseDate !== undefined) book.releaseDate = result.releaseDate;
+        if (result.genres?.length) book.genres = result.genres;
       }
       saveBooks(merged);
       if (consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) break;
@@ -178,9 +182,10 @@ async function sync(manual) {
 
     render();
     const remaining = merged.filter((b) => b.releaseDate === undefined).length;
+    const missingGenres = merged.filter((b) => !(b.genres || []).length).length;
     const syncedNote = !state.settings.hardcoverToken
-      ? " (add a Hardcover API key in Settings to fetch release dates)"
-      : remaining ? ` (${remaining} couldn't be looked up — will retry next sync)` : "";
+      ? " (add a Hardcover API key in Settings to fetch release dates and genres)"
+      : remaining || missingGenres ? ` (${Math.max(remaining, missingGenres)} couldn't be looked up — will retry next sync)` : "";
     syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + syncedNote;
   } catch (err) {
     console.error(err);
@@ -234,6 +239,13 @@ function parseGoodreadsRss(xmlText) {
     const author = get("author_name");
     const title = get("title");
     const cover = get("book_large_image_url") || get("book_medium_image_url") || get("book_image_url");
+    const genres = normalizeGenres([
+      ...getAll(item, "genre"),
+      ...getAll(item, "category"),
+      ...getAll(item, "shelf"),
+      ...splitShelfLabels(get("user_shelves")),
+      ...splitShelfLabels(get("bookshelf")),
+    ]);
     // The feed's own <link> points to the user's private review page (requires
     // login). The public book page is reconstructed from book_id instead.
     const link = bookId ? `https://www.goodreads.com/book/show/${bookId}` : get("link");
@@ -243,22 +255,54 @@ function parseGoodreadsRss(xmlText) {
       author,
       isbn,
       cover,
+      genres,
       link,
     };
   });
+}
+
+function getAll(parent, tag) {
+  return [...parent.querySelectorAll(tag)].map((node) => node.textContent?.trim()).filter(Boolean);
+}
+
+function splitShelfLabels(value) {
+  return (value || "")
+    .split(/[,|;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function normalizeGenres(values) {
+  const ignored = new Set(["to-read", "currently-reading", "read", "owned", "default"]);
+  const seen = new Set();
+  const genres = [];
+
+  for (const raw of values) {
+    const genre = raw.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    const key = genre.toLowerCase();
+    if (!genre || ignored.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    genres.push(toTitleCase(genre));
+  }
+
+  return genres;
+}
+
+function toTitleCase(value) {
+  return value.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ---------- Release date lookup (Hardcover) ----------
+// ---------- Book detail lookup (Hardcover) ----------
 
 const HARDCOVER_ENDPOINT = "https://api.hardcover.app/v1/graphql";
 
-// Returns a date string if found, null if genuinely not found (safe to cache),
-// or undefined if the lookup failed/was rate-limited (should be retried later).
-async function lookupReleaseDate(book) {
+// Returns book metadata if the lookup succeeds, or undefined if the lookup
+// failed/was rate-limited and should be retried later.
+async function lookupBookMetadata(book) {
   const token = state.settings.hardcoverToken;
   if (!token) return undefined;
 
@@ -268,19 +312,28 @@ async function lookupReleaseDate(book) {
         query LookupByIsbn($isbn: String!) {
           editions(where: {_or: [{isbn_13: {_eq: $isbn}}, {isbn_10: {_eq: $isbn}}]}, limit: 1) {
             release_date
-            book { release_date }
+            book {
+              id
+              release_date
+              cached_tags(path: "$.Genre")
+            }
           }
         }
       `, { isbn: book.isbn });
       const edition = byIsbn?.editions?.[0];
-      const date = edition?.release_date || edition?.book?.release_date;
-      if (date) return date;
+      if (edition) {
+        return {
+          releaseDate: edition.release_date || edition.book?.release_date || null,
+          genres: normalizeHardcoverGenres(edition.book?.cached_tags),
+        };
+      }
     }
 
     if (book.title) {
       // Hardcover disallows filtering books/editions with _ilike, so title/author
       // matching goes through its dedicated search endpoint instead, which returns
-      // release_date directly on each hit's document.
+      // release_date directly on each hit's document. Genre tags live on the book
+      // row, so we follow up by id when the search result includes one.
       const q = [book.title, book.author].filter(Boolean).join(" ");
       const searchResult = await hardcoverQuery(token, `
         query Search($q: String!) {
@@ -289,14 +342,42 @@ async function lookupReleaseDate(book) {
           }
         }
       `, { q });
-      const date = searchResult?.search?.results?.hits?.[0]?.document?.release_date;
-      if (date) return date;
+      const document = searchResult?.search?.results?.hits?.[0]?.document;
+      const id = Number(document?.id);
+      const details = id ? await lookupHardcoverBookDetails(token, id) : {};
+      return {
+        releaseDate: document?.release_date || details.releaseDate || null,
+        genres: details.genres || [],
+      };
     }
 
-    return null; // queried successfully, genuinely no release date on record
+    return { releaseDate: null, genres: [] }; // queried successfully, genuinely no metadata on record
   } catch {
     return undefined;
   }
+}
+
+async function lookupHardcoverBookDetails(token, id) {
+  const data = await hardcoverQuery(token, `
+    query BookDetails($id: Int!) {
+      books_by_pk(id: $id) {
+        release_date
+        cached_tags(path: "$.Genre")
+      }
+    }
+  `, { id });
+  const book = data?.books_by_pk;
+  return {
+    releaseDate: book?.release_date || null,
+    genres: normalizeHardcoverGenres(book?.cached_tags),
+  };
+}
+
+function normalizeHardcoverGenres(value) {
+  const names = Array.isArray(value)
+    ? value.map((entry) => typeof entry === "string" ? entry : entry?.tag || entry?.name || entry?.slug)
+    : [];
+  return normalizeGenres(names).slice(0, 8);
 }
 
 async function hardcoverQuery(token, query, variables) {
@@ -320,6 +401,9 @@ async function hardcoverQuery(token, query, variables) {
 const monthLabel = document.getElementById("month-label");
 const calendarDays = document.getElementById("calendar-days");
 const upcomingList = document.getElementById("upcoming-list");
+const genreFilter = document.getElementById("genre-filter");
+const randomizeBtn = document.getElementById("randomize-btn");
+const randomizerResult = document.getElementById("randomizer-result");
 
 document.getElementById("prev-month").addEventListener("click", () => {
   state.viewDate.setMonth(state.viewDate.getMonth() - 1);
@@ -333,9 +417,12 @@ document.getElementById("today-btn").addEventListener("click", () => {
   state.viewDate = new Date();
   renderCalendar();
 });
+randomizeBtn.addEventListener("click", randomizeNextRead);
+genreFilter.addEventListener("change", renderRandomizerPlaceholder);
 
 function render() {
   renderCalendar();
+  renderRandomizer();
   renderList();
 }
 
@@ -399,6 +486,95 @@ function groupBooksByDate() {
   return map;
 }
 
+function renderRandomizer() {
+  const previous = genreFilter.value || "any";
+  const genres = getAvailableGenres();
+
+  genreFilter.innerHTML = '<option value="any">Any</option>';
+  for (const genre of genres) {
+    const option = document.createElement("option");
+    option.value = genre;
+    option.textContent = genre;
+    genreFilter.appendChild(option);
+  }
+
+  genreFilter.value = previous === "any" || genres.includes(previous) ? previous : "any";
+  renderRandomizerPlaceholder();
+}
+
+function getAvailableGenres() {
+  return [...new Set(state.books.flatMap((book) => book.genres || []))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function renderRandomizerPlaceholder() {
+  if (state.books.length === 0) {
+    randomizerResult.innerHTML = '<p class="empty-state">Sync your Goodreads To-Read shelf, then roll for your next book.</p>';
+    randomizeBtn.disabled = true;
+    return;
+  }
+
+  randomizeBtn.disabled = false;
+  const selectedGenre = genreFilter.value;
+  const count = getRandomizerPool().length;
+  const genreCopy = selectedGenre === "any" ? "your whole shelf" : selectedGenre;
+  const missingGenreCount = state.books.filter((book) => !(book.genres || []).length).length;
+  const genreHint = missingGenreCount && selectedGenre === "any"
+    ? ` <span class="randomizer-hint">${missingGenreCount} book${missingGenreCount === 1 ? "" : "s"} still need Hardcover genres.</span>`
+    : "";
+
+  randomizerResult.innerHTML = count
+    ? `<p class="empty-state">Ready to pick from ${count} book${count === 1 ? "" : "s"} in ${escapeHtml(genreCopy)}.${genreHint}</p>`
+    : '<p class="empty-state">No books match that genre yet. Try Any.</p>';
+}
+
+function randomizeNextRead() {
+  const pool = getRandomizerPool();
+  if (!pool.length) {
+    renderRandomizerPlaceholder();
+    return;
+  }
+
+  const book = pool[Math.floor(Math.random() * pool.length)];
+  renderRandomizerResult(book);
+}
+
+function getRandomizerPool() {
+  const selectedGenre = genreFilter.value;
+  if (selectedGenre === "any") return state.books;
+  return state.books.filter((book) => (book.genres || []).includes(selectedGenre));
+}
+
+function renderRandomizerResult(book) {
+  const genres = book.genres?.length
+    ? `<div class="randomizer-genres">${book.genres.map(escapeHtml).join(" · ")}</div>`
+    : "";
+  const releaseDate = book.releaseDate
+    ? `<div class="randomizer-date">${formatReleaseDate(book.releaseDate)}</div>`
+    : "";
+
+  randomizerResult.innerHTML = "";
+
+  const result = document.createElement("div");
+  result.className = "randomizer-book";
+
+  const cover = createCover(book, "randomizer-cover");
+
+  const info = document.createElement("div");
+  info.className = "randomizer-info";
+  info.innerHTML = `
+    <div class="randomizer-kicker">Your next read</div>
+    <div class="randomizer-title">${escapeHtml(book.title)}</div>
+    <div class="randomizer-author">${escapeHtml(book.author)}</div>
+    ${genres}
+    ${releaseDate}
+  `;
+
+  result.appendChild(linkWrap(cover, book.link));
+  result.appendChild(info);
+  randomizerResult.appendChild(result);
+}
+
 function renderList() {
   const todayKey = new Date().toISOString().slice(0, 10);
   const upcoming = state.books
@@ -417,9 +593,7 @@ function renderList() {
     const row = document.createElement("div");
     row.className = "book-row";
 
-    const img = document.createElement("img");
-    img.src = book.cover || "";
-    img.alt = book.title;
+    const cover = createCover(book, "book-cover");
 
     const info = document.createElement("div");
     info.className = "book-info";
@@ -429,24 +603,44 @@ function renderList() {
     date.className = "book-date" + (book.releaseDate === todayKey ? " today" : "");
     date.textContent = book.releaseDate === todayKey
       ? "Out today"
-      : new Date(book.releaseDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      : formatReleaseDate(book.releaseDate);
 
-    row.appendChild(linkWrap(img, book.link));
+    row.appendChild(linkWrap(cover, book.link));
     row.appendChild(info);
     row.appendChild(date);
     upcomingList.appendChild(row);
   }
 }
 
+function formatReleaseDate(date) {
+  return new Date(date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 // Wraps a cover <img> in a link to its Goodreads page, when we have one.
-function linkWrap(img, link) {
-  if (!link) return img;
+function linkWrap(content, link) {
+  if (!link) return content;
   const a = document.createElement("a");
   a.href = link;
   a.target = "_blank";
   a.rel = "noopener";
-  a.appendChild(img);
+  a.appendChild(content);
   return a;
+}
+
+function createCover(book, className) {
+  if (book.cover) {
+    const img = document.createElement("img");
+    img.src = book.cover;
+    img.alt = book.title;
+    img.className = className;
+    return img;
+  }
+
+  const fallback = document.createElement("div");
+  fallback.className = `${className} cover-placeholder`;
+  fallback.setAttribute("aria-label", book.title);
+  fallback.textContent = "No cover";
+  return fallback;
 }
 
 function escapeHtml(str) {

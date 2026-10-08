@@ -42,6 +42,25 @@
     <div class="calendar-grid" id="calendar-days"></div>
   </section>
 
+  <section class="randomizer-section">
+    <div class="randomizer-header">
+      <div>
+        <h2>Pick my next read</h2>
+        <p>Choose a genre or let the whole To Be Read shelf surprise you.</p>
+      </div>
+      <div class="randomizer-controls">
+        <label for="genre-filter">Genre</label>
+        <select id="genre-filter">
+          <option value="any">Any</option>
+        </select>
+        <button id="randomize-btn" class="btn btn-primary">Randomize</button>
+      </div>
+    </div>
+    <div id="randomizer-result" class="randomizer-result">
+      <p class="empty-state">Sync your Goodreads To-Read shelf, then roll for your next book.</p>
+    </div>
+  </section>
+
   <section class="list-section">
     <h2>Upcoming releases</h2>
     <div id="upcoming-list" class="upcoming-list">

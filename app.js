@@ -354,11 +354,11 @@ async function sync(manual) {
     }
     const merged = [...state.books, ...newBooks];
 
-    // Look up Hardcover metadata for every book still missing release dates or
-    // genre data, paced to stay under Hardcover's rate limit so one sync can
-    // finish the whole shelf instead of requiring repeated manual syncs.
+    // Look up Hardcover metadata for every book still missing release dates,
+    // genre data, or cover art, paced to stay under Hardcover's rate limit so
+    // one sync can finish the whole shelf instead of requiring repeated manual syncs.
     const batch = state.settings.hardcoverToken
-      ? merged.filter((b) => b.releaseDate === undefined || !(b.genres || []).length)
+      ? merged.filter((b) => b.releaseDate === undefined || !(b.genres || []).length || !b.cover)
       : [];
     let consecutiveFailures = 0;
     let backoffMs = 1000;
@@ -389,6 +389,7 @@ async function sync(manual) {
         backoffMs = 1000;
         if (result.releaseDate !== undefined) book.releaseDate = result.releaseDate;
         if (result.genres?.length) book.genres = result.genres;
+        if (result.cover) book.cover = result.cover;
       }
       saveBooks(merged);
       if (consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) break;
@@ -401,9 +402,11 @@ async function sync(manual) {
     const remaining = merged.filter((b) => b.releaseDate === undefined).length;
     const missingGenres = merged.filter((b) => !(b.genres || []).length).length;
     const addedNote = newBooks.length ? ` Added ${newBooks.length} new RSS book${newBooks.length === 1 ? "" : "s"}.` : ` No new RSS books. ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} ignored.`;
+    const missingCovers = merged.filter((b) => !b.cover).length;
+    const unresolved = Math.max(remaining, missingGenres, missingCovers);
     const syncedNote = !state.settings.hardcoverToken
-      ? " (add a Hardcover API key in Settings to fetch release dates and genres)"
-      : remaining || missingGenres ? ` (${Math.max(remaining, missingGenres)} couldn't be looked up — will retry next sync)` : "";
+      ? " (add a Hardcover API key in Settings to fetch release dates, genres, and covers)"
+      : unresolved ? ` (${unresolved} couldn't be looked up — will retry next sync)` : "";
     syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "." + addedNote + syncedNote;
   } catch (err) {
     console.error(err);
@@ -533,6 +536,7 @@ async function lookupBookMetadata(book) {
             book {
               id
               release_date
+              cached_image(path: "url")
               cached_tags(path: "$.Genre")
             }
           }
@@ -542,6 +546,7 @@ async function lookupBookMetadata(book) {
       if (edition) {
         return {
           releaseDate: edition.release_date || edition.book?.release_date || null,
+          cover: normalizeCoverUrl(edition.book?.cached_image),
           genres: normalizeHardcoverGenres(edition.book?.cached_tags),
         };
       }
@@ -565,11 +570,12 @@ async function lookupBookMetadata(book) {
       const details = id ? await lookupHardcoverBookDetails(token, id) : {};
       return {
         releaseDate: document?.release_date || details.releaseDate || null,
+        cover: normalizeCoverUrl(document?.image_url || document?.image?.url || details.cover),
         genres: details.genres || [],
       };
     }
 
-    return { releaseDate: null, genres: [] }; // queried successfully, genuinely no metadata on record
+    return { releaseDate: null, cover: "", genres: [] }; // queried successfully, genuinely no metadata on record
   } catch {
     return undefined;
   }
@@ -580,6 +586,7 @@ async function lookupHardcoverBookDetails(token, id) {
     query BookDetails($id: Int!) {
       books_by_pk(id: $id) {
         release_date
+        cached_image(path: "url")
         cached_tags(path: "$.Genre")
       }
     }
@@ -587,8 +594,15 @@ async function lookupHardcoverBookDetails(token, id) {
   const book = data?.books_by_pk;
   return {
     releaseDate: book?.release_date || null,
+    cover: normalizeCoverUrl(book?.cached_image),
     genres: normalizeHardcoverGenres(book?.cached_tags),
   };
+}
+
+function normalizeCoverUrl(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value.url || "";
 }
 
 function normalizeHardcoverGenres(value) {

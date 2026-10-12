@@ -38,6 +38,8 @@ let state = {
   settings: loadSettings(),
   books: loadBooks(),
   viewDate: new Date(),
+  randomizerDecks: {},
+  randomizerLastPicks: {},
 };
 
 // ---------- Persistence ----------
@@ -770,7 +772,7 @@ function randomizeNextRead() {
     return;
   }
 
-  const book = pool[Math.floor(Math.random() * pool.length)];
+  const book = drawRandomizerBook(pool);
   renderRandomizerResult(book);
 }
 
@@ -778,6 +780,48 @@ function getRandomizerPool() {
   const selectedGenre = genreFilter.value;
   if (selectedGenre === "any") return state.books;
   return state.books.filter((book) => (book.genres || []).includes(selectedGenre));
+}
+
+function drawRandomizerBook(pool) {
+  const deckKey = genreFilter.value || "any";
+  const poolByKey = new Map(pool.map((book) => [getRandomizerBookKey(book), book]));
+  const previousKey = state.randomizerLastPicks[deckKey];
+  let deck = state.randomizerDecks[deckKey] || [];
+
+  deck = deck.filter((key) => poolByKey.has(key));
+
+  if (!deck.length) {
+    deck = shuffleArray([...poolByKey.keys()]);
+
+    if (deck.length > 1 && deck[0] === previousKey) {
+      const swapIndex = Math.floor(Math.random() * (deck.length - 1)) + 1;
+      [deck[0], deck[swapIndex]] = [deck[swapIndex], deck[0]];
+    }
+  }
+
+  const selectedKey = deck.shift();
+  state.randomizerDecks[deckKey] = deck;
+  state.randomizerLastPicks[deckKey] = selectedKey;
+
+  return poolByKey.get(selectedKey) || pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getRandomizerBookKey(book) {
+  return [
+    book.id,
+    cleanIsbn(book.isbn),
+    book.title,
+    book.author,
+  ].filter(Boolean).join("|");
+}
+
+function shuffleArray(items) {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 function renderRandomizerResult(book) {

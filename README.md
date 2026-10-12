@@ -13,11 +13,13 @@ upcoming book release dates on a calendar — no manual re-importing needed.
   What *does* work: every shelf — including private ones — has an RSS feed URL
   containing a secret token. Paste that URL once and the app keeps re-fetching
   it automatically through a CORS proxy (a small relay that lets browser code
-  read pages from other sites). Each RSS sync is compared against the remembered
-  CSV books, so duplicates are ignored and only new RSS books are added. Free
-  public proxies are flaky (rate limits, trial periods, outages), so the app
-  tries several in turn automatically — see **Reliable syncing** below for a
-  permanent fix.
+  read pages from other sites). Each RSS sync is compared against all remembered
+  books, so duplicates are ignored and only new RSS books are added. Because
+  Goodreads RSS can show only a rolling slice of large shelves, Shelf Watch
+  never removes a remembered book just because it disappeared from a later feed
+  response. Free public proxies are flaky (rate limits, trial periods, outages),
+  so the app tries several in turn automatically — see **Reliable syncing**
+  below for a permanent fix.
 - **Release dates**: Goodreads' feed often only has a book's *original* publish
   year, not a future edition's date, so each book is also looked up via the
   [Hardcover](https://hardcover.app/) API — a book-tracking site that keeps

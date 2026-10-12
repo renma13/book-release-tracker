@@ -6,8 +6,10 @@
 // a secret token, found at the bottom of the shelf page on goodreads.com behind
 // the small "RSS" link. That URL acts like a saved credential — paste it once in
 // Settings and this app can keep re-fetching it through a CORS proxy (plain
-// browser JS can't call goodreads.com directly due to CORS). RSS syncs are merged
-// into the remembered CSV books so duplicates are ignored and new books are added.
+// browser JS can't call goodreads.com directly due to CORS). RSS syncs are
+// additive: every seen RSS book is remembered locally, duplicates are merged,
+// and older remembered books are never removed just because they no longer
+// appear in Goodreads' rolling RSS window.
 //
 // Release dates: Goodreads RSS often only has the original publish year, not a
 // future edition's release date, so each book is looked up via the Hardcover API
@@ -274,6 +276,7 @@ function mergeBookData(prior, incoming) {
     link: incoming.link || prior.link || "",
     source: prior.source === "csv" && incoming.source === "rss" ? "csv+rss" : prior.source || incoming.source,
     loggedAt: prior.loggedAt || incoming.loggedAt || Date.now(),
+    detailLookupAttemptedAt: prior.detailLookupAttemptedAt || incoming.detailLookupAttemptedAt,
     updatedAt: Date.now(),
   };
 }
@@ -333,6 +336,7 @@ async function sync(manual) {
     const existing = buildBookIndex(state.books);
     const newBooks = [];
     let duplicateCount = 0;
+    const seenAt = Date.now();
 
     for (const item of items) {
       const prior = findMatchingBook(existing, item);
@@ -341,8 +345,11 @@ async function sync(manual) {
         ...item,
         releaseDate: prior?.releaseDate !== undefined ? prior.releaseDate : undefined,
         genres: item.genres?.length ? item.genres : prior?.genres || [],
-        source: prior?.source || "rss",
+        source: prior?.source === "csv" ? "csv+rss" : prior?.source || "rss",
         loggedAt: prior?.loggedAt || Date.now(),
+        firstSeenInRssAt: prior?.firstSeenInRssAt || seenAt,
+        lastSeenInRssAt: seenAt,
+        detailLookupAttemptedAt: prior?.detailLookupAttemptedAt,
         updatedAt: Date.now(),
       };
 
@@ -354,13 +361,17 @@ async function sync(manual) {
         addToBookIndex(existing, book);
       }
     }
+    // Goodreads RSS only exposes a rolling slice of the shelf. Keep every
+    // previously remembered book and append newly discovered RSS books; never
+    // treat absence from this feed response as a deletion.
     const merged = [...state.books, ...newBooks];
 
-    // Look up Hardcover metadata for every book still missing release dates,
-    // genre data, or cover art, paced to stay under Hardcover's rate limit so
-    // one sync can finish the whole shelf instead of requiring repeated manual syncs.
+    // Look up Hardcover metadata only for books that have not already had a
+    // successful detail check. This lets the first full sync enrich imported
+    // CSV books, then future syncs focus on new RSS additions instead of
+    // rechecking hundreds of older unresolved books on every app open.
     const batch = state.settings.hardcoverToken
-      ? merged.filter((b) => b.releaseDate === undefined || !(b.genres || []).length || !b.cover)
+      ? merged.filter(shouldLookupBookDetails)
       : [];
     let consecutiveFailures = 0;
     let backoffMs = 1000;
@@ -392,6 +403,7 @@ async function sync(manual) {
         if (result.releaseDate !== undefined) book.releaseDate = result.releaseDate;
         if (result.genres?.length) book.genres = result.genres;
         if (result.cover) book.cover = result.cover;
+        book.detailLookupAttemptedAt = Date.now();
       }
       saveBooks(merged);
       if (consecutiveFailures >= MAX_CONSECUTIVE_LOOKUP_FAILURES) break;
@@ -408,7 +420,7 @@ async function sync(manual) {
     const unresolved = Math.max(remaining, missingGenres, missingCovers);
     const syncedNote = !state.settings.hardcoverToken
       ? " (add a Hardcover API key in Settings to fetch release dates, genres, and covers)"
-      : unresolved ? ` (${unresolved} couldn't be looked up — will retry next sync)` : "";
+      : unresolved ? ` (${unresolved} still missing some details)` : "";
     syncStatus.textContent = "Synced " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "." + addedNote + syncedNote;
   } catch (err) {
     console.error(err);
@@ -517,6 +529,15 @@ function toTitleCase(value) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function shouldLookupBookDetails(book) {
+  if (!bookNeedsDetails(book)) return false;
+  return !book.detailLookupAttemptedAt;
+}
+
+function bookNeedsDetails(book) {
+  return book.releaseDate === undefined || !(book.genres || []).length || !book.cover;
 }
 
 // ---------- Book detail lookup (Hardcover) ----------
